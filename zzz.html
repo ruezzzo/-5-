@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Змейка — простая игра</title>
+  <style>
+    :root{--bg:#0f1720;--panel:#0b1220;--accent:#10b981;--muted:#94a3b8}
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;background:linear-gradient(180deg,var(--bg),#071021);color:#e6eef6}
+    .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+    .card{background:rgba(255,255,255,0.03);border-radius:12px;padding:18px;max-width:900px;width:100%;display:grid;grid-template-columns:1fr 280px;gap:16px;box-shadow:0 6px 30px rgba(2,6,23,0.6)}
+    @media(max-width:820px){.card{grid-template-columns:1fr;}}
+    .game{display:flex;flex-direction:column;gap:12px;align-items:center}
+    canvas{background:linear-gradient(180deg,#00111a,#002233);border-radius:8px;width:100%;height:auto;max-width:640px;image-rendering:pixelated}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    button{background:transparent;border:1px solid rgba(255,255,255,0.08);color:inherit;padding:8px 10px;border-radius:8px;cursor:pointer}
+    button.primary{background:linear-gradient(90deg,var(--accent),#06b6d4);color:#042018;border:0}
+    .side{padding:8px 6px}
+    .info{font-size:14px;color:var(--muted)}
+    .big{font-size:28px;font-weight:700}
+    .small{font-size:13px}
+    .footer{font-size:12px;color:var(--muted);margin-top:6px}
+    .kbd{display:inline-block;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.03);margin-left:6px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="game">
+        <canvas id="board" width="400" height="400"></canvas>
+        <div class="controls">
+          <button id="start" class="primary">Старт</button>
+          <button id="pause">Пауза</button>
+          <button id="reset">Сброс</button>
+          <div class="info small">Управление: стрелки или WASD <span class="kbd">↑ ↓ ← →</span></div>
+        </div>
+        <div class="footer">Простая змейка на чистом JavaScript — нажмите Старт чтобы играть</div>
+      </div>
+
+      <div class="side">
+        <div class="big" id="score">Счёт: 0</div>
+        <div class="info">Длина: <span id="len">1</span></div>
+        <div style="height:12px"></div>
+        <div class="info">Правила:</div>
+        <ul class="info small">
+          <li>Ешьте еду (квадрат) — змейка растёт.</li>
+          <li>Не врезайтесь в стены и в собственный хвост.</li>
+          <li>Скорость можно менять в коде (переменная <code>speed</code>).</li>
+        </ul>
+        <div style="height:10px"></div>
+        <div class="info small">Советы: попробуйте резкие повороты и планируйте путь к еде.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Простая реализация змейки
+    const canvas = document.getElementById('board');
+    const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('start');
+    const pauseBtn = document.getElementById('pause');
+    const resetBtn = document.getElementById('reset');
+    const scoreEl = document.getElementById('score');
+    const lenEl = document.getElementById('len');
+
+    // Настройки
+    const gridSize = 20; // число ячеек по ширине и высоте
+    const tile = canvas.width / gridSize; // размер клетки в пикселях
+    let speed = 8; // обновлений в секунду
+
+    let snake, dir, food, gameLoopId, running=false, score=0;
+
+    function resetGame(){
+      snake = [{x: Math.floor(gridSize/2), y: Math.floor(gridSize/2)}];
+      dir = {x:1,y:0}; // движение вправо
+      placeFood();
+      score = 0;
+      updateUI();
+      running = false;
+      if (gameLoopId) cancelAnimationFrame(gameLoopId);
+    }
+
+    function placeFood(){
+      while(true){
+        const x = Math.floor(Math.random()*gridSize);
+        const y = Math.floor(Math.random()*gridSize);
+        if (!snake.some(s => s.x===x && s.y===y)){
+          food = {x,y};
+          return;
+        }
+      }
+    }
+
+    // управление клавишами
+    window.addEventListener('keydown',(e)=>{
+      const key = e.key;
+      if (key === 'ArrowUp' || key === 'w' || key === 'W'){ setDir(0,-1); }
+      if (key === 'ArrowDown' || key === 's' || key === 'S'){ setDir(0,1); }
+      if (key === 'ArrowLeft' || key === 'a' || key === 'A'){ setDir(-1,0); }
+      if (key === 'ArrowRight' || key === 'd' || key === 'D'){ setDir(1,0); }
+      if (key === ' '){ // space пауза
+        togglePause();
+      }
+    });
+
+    function setDir(x,y){
+      // запрет поворота на 180
+      if (snake.length>1 && snake[0].x + x === snake[1].x && snake[0].y + y === snake[1].y) return;
+      dir = {x,y};
+    }
+
+    // игровой цикл с фиксированной частотой обновления
+    let lastTime = 0;
+    function loop(ts){
+      if (!running) return;
+      if (!lastTime) lastTime = ts;
+      const secs = (ts - lastTime)/1000;
+      const interval = 1 / speed;
+      if (secs >= interval){
+        update();
+        draw();
+        lastTime = ts;
+      }
+      gameLoopId = requestAnimationFrame(loop);
+    }
+
+    function startGame(){
+      if (running) return;
+      running = true;
+      lastTime = 0;
+      gameLoopId = requestAnimationFrame(loop);
+    }
+
+    function togglePause(){
+      running = !running;
+      if (running) { lastTime = 0; gameLoopId = requestAnimationFrame(loop); }
+    }
+
+    function update(){
+      // вычисляем новую голову
+      const head = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+
+      // столкновения со стеной
+      if (head.x < 0 || head.y < 0 || head.x >= gridSize || head.y >= gridSize){
+        gameOver();
+        return;
+      }
+
+      // столкновение с хвостом
+      if (snake.some(s => s.x === head.x && s.y === head.y)){
+        gameOver();
+        return;
+      }
+
+      snake.unshift(head);
+
+      // еда
+      if (head.x === food.x && head.y === food.y){
+        score += 10;
+        placeFood();
+      } else {
+        snake.pop(); // сдвигаем хвост
+      }
+
+      updateUI();
+    }
+
+    function gameOver(){
+      running = false;
+      alert('Игра окончена! Счёт: ' + score);
+      // предложение начать заново
+      resetGame();
+    }
+
+    function draw(){
+      // clear
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      // сетка (по желанию)
+      // for (let i=0;i<gridSize;i++){
+      //   ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+      //   ctx.beginPath(); ctx.moveTo(i*tile,0); ctx.lineTo(i*tile,canvas.height); ctx.stroke();
+      // }
+
+      // еда
+      drawRect(food.x,food.y,tile, true);
+
+      // змейка
+      for (let i=0;i<snake.length;i++){
+        const s = snake[i];
+        drawRect(s.x,s.y,tile, false, i===0);
+      }
+    }
+
+    function drawRect(cx,cy,size, isFood=false, isHead=false){
+      const x = cx * size;
+      const y = cy * size;
+      if (isFood){
+        ctx.fillStyle = '#f97316';
+        roundRect(ctx,x+2,y+2,size-4,size-4,4,true,false);
+        return;
+      }
+      if (isHead){
+        ctx.fillStyle = '#22c55e';
+      } else {
+        ctx.fillStyle = 'rgba(16,185,129,0.7)';
+      }
+      roundRect(ctx,x+1,y+1,size-2,size-2,3,true,false);
+    }
+
+    // вспомогательная функция для закруглённых прямоугольников
+    function roundRect(ctx,x,y,w,h,r,fill,stroke){
+      if (typeof r === 'undefined') r = 5;
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+      if (fill) ctx.fill();
+      if (stroke) ctx.stroke();
+    }
+
+    function updateUI(){
+      scoreEl.textContent = 'Счёт: ' + score;
+      lenEl.textContent = snake.length;
+    }
+
+    // кнопки
+    startBtn.addEventListener('click', ()=>{ startGame(); });
+    pauseBtn.addEventListener('click', ()=>{ togglePause(); });
+    resetBtn.addEventListener('click', ()=>{ resetGame(); draw(); });
+
+    // инициализация
+    resetGame();
+    draw();
+
+    // Поддержка мобильного: простые кнопки касания (встроенные)
+    // Можно добавить сенсорные кнопки отдельно при желании
+  </script>
+</body>
+</html>
